@@ -93,47 +93,49 @@ namespace QuantLib {
         #ifdef _OPENMP
         #pragma omp parallel
         {
-            // Thread-local statistics accumulator
+            // Thread-local path generators and accumulator
+            auto localPathGen = ext::make_shared<path_generator_type>(*pathGenerator_);
+            auto localCvPathGen = cvPathGenerator_ ? 
+                ext::make_shared<path_generator_type>(*cvPathGenerator_) : nullptr;
             stats_type localAccumulator = stats_type();
             
             #pragma omp for nowait
             for(Size j = 1; j <= samples; j++) {
-                const sample_type& path = pathGenerator_->next();
+                const sample_type& path = localPathGen->next();
                 result_type price = (*pathPricer_)(path.value);
 
-            if (isControlVariate_) {
-                if (!cvPathGenerator_) {
-                    price += cvOptionValue_-(*cvPathPricer_)(path.value);
-                }
-                else {
-                    const sample_type& cvPath = cvPathGenerator_->next();
-                    price += cvOptionValue_-(*cvPathPricer_)(cvPath.value);
-                }
-            }
-
-            if (isAntitheticVariate_) {
-                const sample_type& atPath = pathGenerator_->antithetic();
-                result_type price2 = (*pathPricer_)(atPath.value);
                 if (isControlVariate_) {
-                    if (!cvPathGenerator_)
-                        price2 += cvOptionValue_-(*cvPathPricer_)(atPath.value);
-                    else {
-                        const sample_type& cvPath = cvPathGenerator_->antithetic();
-                        price2 += cvOptionValue_-(*cvPathPricer_)(cvPath.value);
+                    if (!localCvPathGen) {
+                        price += cvOptionValue_-(*cvPathPricer_)(path.value);
+                    } else {
+                        const sample_type& cvPath = localCvPathGen->next();
+                        price += cvOptionValue_-(*cvPathPricer_)(cvPath.value);
                     }
                 }
 
-                localAccumulator.add((price+price2)/2.0, path.weight);
-            } else {
-                localAccumulator.add(price, path.weight);
+                if (isAntitheticVariate_) {
+                    const sample_type& atPath = localPathGen->antithetic();
+                    result_type price2 = (*pathPricer_)(atPath.value);
+                    if (isControlVariate_) {
+                        if (!localCvPathGen) {
+                            price2 += cvOptionValue_-(*cvPathPricer_)(atPath.value);
+                        } else {
+                            const sample_type& cvPath = localCvPathGen->antithetic();
+                            price2 += cvOptionValue_-(*cvPathPricer_)(cvPath.value);
+                        }
+                    }
+
+                    localAccumulator.add((price+price2)/2.0, path.weight);
+                } else {
+                    localAccumulator.add(price, path.weight);
+                }
             }
-        }
             
-        // Merge thread-local results
-        #pragma omp critical
-        {
-            sampleAccumulator_.add(localAccumulator);
-        }
+            // Merge thread-local results
+            #pragma omp critical
+            {
+                sampleAccumulator_.add(localAccumulator);
+            }
         }
         #else
         for(Size j = 1; j <= samples; j++) {
