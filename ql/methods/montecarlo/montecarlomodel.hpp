@@ -90,86 +90,59 @@ namespace QuantLib {
     // inline definitions
     template <template <class> class MC, class RNG, class S>
     inline void MonteCarloModel<MC,RNG,S>::addSamples(Size samples) {
-        #ifdef _OPENMP
-        #pragma omp parallel
-        {
-            // Thread-local path generators and accumulator
-            auto localPathGen = ext::make_shared<path_generator_type>(*pathGenerator_);
-            auto localCvPathGen = cvPathGenerator_ ? 
-                ext::make_shared<path_generator_type>(*cvPathGenerator_) : nullptr;
-            stats_type localAccumulator = stats_type();
-            
-            #pragma omp for nowait
-            for(Size j = 1; j <= samples; j++) {
-                const sample_type& path = localPathGen->next();
-                result_type price = (*pathPricer_)(path.value);
-
-                if (isControlVariate_) {
-                    if (!localCvPathGen) {
-                        price += cvOptionValue_-(*cvPathPricer_)(path.value);
-                    } else {
-                        const sample_type& cvPath = localCvPathGen->next();
-                        price += cvOptionValue_-(*cvPathPricer_)(cvPath.value);
-                    }
-                }
-
-                if (isAntitheticVariate_) {
-                    const sample_type& atPath = localPathGen->antithetic();
-                    result_type price2 = (*pathPricer_)(atPath.value);
-                    if (isControlVariate_) {
-                        if (!localCvPathGen) {
-                            price2 += cvOptionValue_-(*cvPathPricer_)(atPath.value);
-                        } else {
-                            const sample_type& cvPath = localCvPathGen->antithetic();
-                            price2 += cvOptionValue_-(*cvPathPricer_)(cvPath.value);
-                        }
-                    }
-
-                    localAccumulator.add((price+price2)/2.0, path.weight);
-                } else {
-                    localAccumulator.add(price, path.weight);
-                }
-            }
-            
-            // Merge thread-local results
-            #pragma omp critical
-            {
-                sampleAccumulator_.add(localAccumulator);
+        // Pre-allocate paths for better memory efficiency
+        std::vector<sample_type> paths;
+        paths.reserve(samples * (isAntitheticVariate_ ? 2 : 1));
+        
+        // Generate all paths first to improve memory locality
+        for(Size j = 1; j <= samples; j++) {
+            paths.push_back(pathGenerator_->next());
+            if (isAntitheticVariate_) {
+                paths.push_back(pathGenerator_->antithetic());
             }
         }
-        #else
-        for(Size j = 1; j <= samples; j++) {
-            const sample_type& path = pathGenerator_->next();
+        
+        // Price all paths
+        #ifdef _OPENMP
+        #pragma omp parallel for
+        #endif
+        for(Size i = 0; i < paths.size(); i++) {
+            const sample_type& path = paths[i];
             result_type price = (*pathPricer_)(path.value);
-            
+
             if (isControlVariate_) {
                 if (!cvPathGenerator_) {
                     price += cvOptionValue_-(*cvPathPricer_)(path.value);
-                }
-                else {
+                } else {
                     const sample_type& cvPath = cvPathGenerator_->next();
                     price += cvOptionValue_-(*cvPathPricer_)(cvPath.value);
                 }
             }
-            
-            if (isAntitheticVariate_) {
-                const sample_type& atPath = pathGenerator_->antithetic();
-                result_type price2 = (*pathPricer_)(atPath.value);
+
+            if (isAntitheticVariate_ && (i % 2) == 1) {
+                // This is the second path of an antithetic pair
+                result_type price1 = price;
+                result_type price2 = (*pathPricer_)(paths[i-1].value);
                 if (isControlVariate_) {
-                    if (!cvPathGenerator_)
-                        price2 += cvOptionValue_-(*cvPathPricer_)(atPath.value);
-                    else {
-                        const sample_type& cvPath = cvPathGenerator_->antithetic();
-                        price2 += cvOptionValue_-(*cvPathPricer_)(cvPath.value);
+                    if (!cvPathGenerator_) {
+                        price2 += cvOptionValue_-(*cvPathPricer_)(paths[i-1].value);
                     }
                 }
-                
-                sampleAccumulator_.add((price+price2)/2.0, path.weight);
-            } else {
-                sampleAccumulator_.add(price, path.weight);
+                #ifdef _OPENMP
+                #pragma omp critical
+                #endif
+                {
+                    sampleAccumulator_.add((price1+price2)/2.0, path.weight);
+                }
+            } else if (!isAntitheticVariate_) {
+                #ifdef _OPENMP
+                #pragma omp critical
+                #endif
+                {
+                    sampleAccumulator_.add(price, path.weight);
+                }
             }
         }
-        #endif
     }
 
     template <template <class> class MC, class RNG, class S>

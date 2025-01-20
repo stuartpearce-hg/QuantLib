@@ -49,7 +49,6 @@ namespace {
         
         // Option parameters
         Option::Type type = Option::Call;
-        Real nominal = 100.0;
         
         // Create required QuantLib objects
         auto spot = ext::make_shared<SimpleQuote>(underlying);

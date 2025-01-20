@@ -37,16 +37,25 @@ namespace QuantLib {
         Size n = path.length();
         QL_REQUIRE(n>1, "the path cannot be empty");
 
-        Real sum;
+        Real sum = runningSum_;
         Size fixings;
+        
         if (path.timeGrid().mandatoryTimes()[0]==0.0) {
-            // include initial fixing
-            sum = std::accumulate(path.begin(),path.end(),runningSum_);
+            // include initial fixing - manual accumulation to avoid temporaries
+            const Real* pathData = path.begin();
+            for (Size i = 0; i < n; ++i) {
+                sum += pathData[i];
+            }
             fixings = pastFixings_ + n;
         } else {
-            sum = std::accumulate(path.begin()+1,path.end(),runningSum_);
+            // Manual accumulation starting from second element
+            const Real* pathData = path.begin() + 1;
+            for (Size i = 1; i < n; ++i) {
+                sum += pathData[i-1];
+            }
             fixings = pastFixings_ + n - 1;
         }
+        
         Real averagePrice = sum/fixings;
         return discount_ * payoff_(averagePrice);
     }

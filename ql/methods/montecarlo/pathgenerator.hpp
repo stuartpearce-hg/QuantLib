@@ -28,6 +28,7 @@
 
 #include <ql/methods/montecarlo/brownianbridge.hpp>
 #include <ql/stochasticprocess.hpp>
+#include <ql/math/randomnumbers/rngbuffer.hpp>
 #include <utility>
 
 namespace QuantLib {
@@ -57,20 +58,18 @@ namespace QuantLib {
                       bool brownianBridge);
         //! \name inspectors
         //@{
-        const sample_type& next() const;
-        const sample_type& antithetic() const;
+        sample_type next() const;
+        sample_type antithetic() const;
         Size size() const { return dimension_; }
         const TimeGrid& timeGrid() const { return timeGrid_; }
         //@}
       private:
-        const sample_type& next(bool antithetic) const;
+        sample_type next(bool antithetic) const;
         bool brownianBridge_;
-        GSG generator_;
         Size dimension_;
         TimeGrid timeGrid_;
         ext::shared_ptr<StochasticProcess1D> process_;
-        mutable sample_type next_;
-        mutable std::vector<Real> temp_;
+        mutable RngBuffer<GSG> generator_;
         BrownianBridge bb_;
     };
 
@@ -83,11 +82,15 @@ namespace QuantLib {
                                       Size timeSteps,
                                       GSG generator,
                                       bool brownianBridge)
-    : brownianBridge_(brownianBridge), generator_(std::move(generator)),
-      dimension_(generator_.dimension()), timeGrid_(length, timeSteps),
+    : brownianBridge_(brownianBridge), 
+      dimension_(timeSteps),
+      timeGrid_(length, timeSteps),
       process_(ext::dynamic_pointer_cast<StochasticProcess1D>(process)),
-      next_(Path(timeGrid_), 1.0), temp_(dimension_), bb_(timeGrid_) {
-        QL_REQUIRE(dimension_==timeSteps,
+      generator_(std::move(generator)),
+      bb_(timeGrid_) {
+        QL_REQUIRE(process_, "process cannot be null");
+        QL_REQUIRE(timeSteps > 0, "timeSteps must be positive");
+        QL_REQUIRE(dimension_ == timeSteps,
                    "sequence generator dimensionality (" << dimension_
                    << ") != timeSteps (" << timeSteps << ")");
     }
@@ -97,60 +100,61 @@ namespace QuantLib {
                                       TimeGrid timeGrid,
                                       GSG generator,
                                       bool brownianBridge)
-    : brownianBridge_(brownianBridge), generator_(std::move(generator)),
-      dimension_(generator_.dimension()), timeGrid_(std::move(timeGrid)),
+    : brownianBridge_(brownianBridge),
+      dimension_(timeGrid.size()-1), 
+      timeGrid_(std::move(timeGrid)),
       process_(ext::dynamic_pointer_cast<StochasticProcess1D>(process)),
-      next_(Path(timeGrid_), 1.0), temp_(dimension_), bb_(timeGrid_) {
+      generator_(generator),
+      bb_(timeGrid_) {
         QL_REQUIRE(dimension_==timeGrid_.size()-1,
                    "sequence generator dimensionality (" << dimension_
                    << ") != timeSteps (" << timeGrid_.size()-1 << ")");
     }
 
     template <class GSG>
-    const typename PathGenerator<GSG>::sample_type&
+    typename PathGenerator<GSG>::sample_type
     PathGenerator<GSG>::next() const {
         return next(false);
     }
 
     template <class GSG>
-    const typename PathGenerator<GSG>::sample_type&
+    typename PathGenerator<GSG>::sample_type
     PathGenerator<GSG>::antithetic() const {
         return next(true);
     }
 
     template <class GSG>
-    const typename PathGenerator<GSG>::sample_type&
+    typename PathGenerator<GSG>::sample_type
     PathGenerator<GSG>::next(bool antithetic) const {
-
-        typedef typename GSG::sample_type sequence_type;
-        const sequence_type& sequence_ =
-            antithetic ? generator_.lastSequence()
-                       : generator_.nextSequence();
+        // Create local storage for this path generation
+        sample_type result(Path(timeGrid_), 1.0);
+        std::vector<Real> temp(dimension_);
+        
+        auto rng_sequence = antithetic ? 
+            generator_.lastSequence() : generator_.nextSequence();
 
         if (brownianBridge_) {
-            bb_.transform(sequence_.value.begin(),
-                          sequence_.value.end(),
-                          temp_.begin());
+            bb_.transform(rng_sequence.value.begin(),
+                        rng_sequence.value.end(),
+                        temp.begin());
         } else {
-            std::copy(sequence_.value.begin(),
-                      sequence_.value.end(),
-                      temp_.begin());
+            std::copy(rng_sequence.value.begin(),
+                     rng_sequence.value.end(),
+                     temp.begin());
         }
 
-        next_.weight = sequence_.weight;
+        result.weight = rng_sequence.weight;
+        result.value.front() = process_->x0();
 
-        Path& path = next_.value;
-        path.front() = process_->x0();
-
-        for (Size i=1; i<path.length(); i++) {
+        #pragma omp parallel for if(result.value.length() > 4)
+        for (Size i=1; i<result.value.length(); i++) {
             Time t = timeGrid_[i-1];
             Time dt = timeGrid_.dt(i-1);
-            path[i] = process_->evolve(t, path[i-1], dt,
-                                       antithetic ? -temp_[i-1] :
-                                                     temp_[i-1]);
+            result.value[i] = process_->evolve(t, result.value[i-1], dt,
+                                           antithetic ? -temp[i-1] : temp[i-1]);
         }
 
-        return next_;
+        return result;
     }
 
 }

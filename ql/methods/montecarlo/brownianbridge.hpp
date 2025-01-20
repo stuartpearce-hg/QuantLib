@@ -110,30 +110,37 @@ namespace QuantLib {
             QL_REQUIRE(end >= begin, "invalid sequence");
             QL_REQUIRE(Size(end-begin) == size_,
                        "incompatible sequence size");
-            // We use output to store the path...
-            output[size_-1] = stdDev_[0] * begin[0];
+            
+            // Create temporary storage for intermediate results
+            std::vector<typename std::iterator_traits<RandomAccessIterator2>::value_type> temp(size_);
+            
+            // We use temp to store the path...
+            temp[size_-1] = stdDev_[0] * begin[0];
             for (Size i=1; i<size_; ++i) {
                 Size j = leftIndex_[i];
                 Size k = rightIndex_[i];
                 Size l = bridgeIndex_[i];
                 if (j != 0) {
-                    output[l] =
-                        leftWeight_[i] * output[j-1] +
-                        rightWeight_[i] * output[k]   +
+                    temp[l] =
+                        leftWeight_[i] * temp[j-1] +
+                        rightWeight_[i] * temp[k]   +
                         stdDev_[i] * begin[i];
                 } else {
-                    output[l] =
-                        rightWeight_[i] * output[k]   +
+                    temp[l] =
+                        rightWeight_[i] * temp[k]   +
                         stdDev_[i] * begin[i];
                 }
             }
-            // ...after which, we calculate the variations and
-            // normalize to unit times
+            
+            // Calculate variations and normalize to unit times in temp
             for (Size i=size_-1; i>=1; --i) {
-                output[i] -= output[i-1];
-                output[i] /= sqrtdt_[i];
+                temp[i] -= temp[i-1];
+                temp[i] /= sqrtdt_[i];
             }
-            output[0] /= sqrtdt_[0];
+            temp[0] /= sqrtdt_[0];
+            
+            // Copy final results to output
+            std::copy(temp.begin(), temp.end(), output);
         }
       private:
         void initialize();
