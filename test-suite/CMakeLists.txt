@@ -213,5 +213,12 @@ if (QL_BUILD_TEST_SUITE)
     if (QL_INSTALL_BENCHMARK)
         install(TARGETS ql_benchmark RUNTIME DESTINATION ${QL_INSTALL_BINDIR})
     endif()
+
+    add_executable(asian_mc_benchmark asianoption_mc_benchmark.cpp)
+    set_target_properties(asian_mc_benchmark PROPERTIES OUTPUT_NAME "asian-mc-benchmark")
+    target_link_libraries(asian_mc_benchmark PRIVATE ql_library)
+    if (QL_INSTALL_BENCHMARK)
+        install(TARGETS asian_mc_benchmark RUNTIME DESTINATION ${QL_INSTALL_BINDIR})
+    endif()
 endif()
 
