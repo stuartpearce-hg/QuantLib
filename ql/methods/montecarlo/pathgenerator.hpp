@@ -69,6 +69,9 @@ namespace QuantLib {
         Size dimension_;
         TimeGrid timeGrid_;
         ext::shared_ptr<StochasticProcess1D> process_;
+        #ifdef _OPENMP
+        #pragma omp threadprivate(next_, temp_)
+        #endif
         mutable sample_type next_;
         mutable std::vector<Real> temp_;
         BrownianBridge bb_;
@@ -87,6 +90,14 @@ namespace QuantLib {
       dimension_(generator_.dimension()), timeGrid_(length, timeSteps),
       process_(ext::dynamic_pointer_cast<StochasticProcess1D>(process)),
       next_(Path(timeGrid_), 1.0), temp_(dimension_), bb_(timeGrid_) {
+        #ifdef _OPENMP
+        #pragma omp parallel
+        {
+            // Initialize thread-private members
+            next_ = sample_type(Path(timeGrid_), 1.0);
+            temp_ = std::vector<Real>(dimension_);
+        }
+        #endif
         QL_REQUIRE(dimension_==timeSteps,
                    "sequence generator dimensionality (" << dimension_
                    << ") != timeSteps (" << timeSteps << ")");
