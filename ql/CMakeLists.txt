@@ -1530,6 +1530,7 @@ set(QL_HEADERS
     math/randomnumbers/primitivepolynomials.hpp
     math/randomnumbers/randomizedlds.hpp
     math/randomnumbers/randomsequencegenerator.hpp
+    math/randomnumbers/rngbuffer.hpp
     math/randomnumbers/ranluxuniformrng.hpp
     math/randomnumbers/rngtraits.hpp
     math/randomnumbers/seedgenerator.hpp
